@@ -17,16 +17,33 @@
 
 struct termios orig_termios;
 
+void die(const char* s)
+{
+  perror(s); //looks at global errno variable and prints error message for it accordingly;
+             //also prints string 's' which will be used for context
+  exit(1);
+}
 void disableRaw()
 {
-  tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
+  if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios) == -1)
+    die("tcsetattr"); //sets parameters associated with terminal (stdin) after all output
+                      //written to stdin is transmitted; all input received but not read is
+                      //discarded (TCSAFLUSH)
+                      //die if no part of the request can be honored (i.e. none of the 
+                      //parameters are set).
 }
 void readRaw()
 {
+  if (tcgetattr(STDIN_FILENO, &orig_termios) == -1)   
+    die("tcgetattr"); //gets input from stdin and stores them in
+                      //global; die if fildes is not a terminal
+  
   struct termios raw;
-  tcgetattr(STDIN_FILENO, &orig_termios);  //gets input from stdin and stores them in global
+    //gets input from stdin and stores them in global
   atexit(disableRaw); //disable raw mode upon exit
   raw = orig_termios; //we make a copy of orig_termios before making changes
+  raw.c_cc[VMIN] = 0; //sets min number of bytes of input before read() can return (0).
+  raw.c_cc[VTIME] = 1; //sets max number of time before read() returns (timeout). (in this case 1, or specifically, one tenth of a second).
   raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | IXON | ISTRIP); //sets the IXON flag so that CTRL-S and CTRL-Q macros are disabled, instead interpreted as a 19
                           //byte and 17 byte input, respectively
   raw.c_oflag &= ~(OPOST);
@@ -53,12 +70,13 @@ void readRaw()
                           / NOTE: the flag fields are significant. The flags OR'd together belong to the same field (i.e. ECHO, ICANON, etc.
                           / belonging to the local mode field, IXON, ICNTRL, etc. belonging to the input flag field, and so forth).  
                           */ 
-  tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+  if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1)
+    die("tcsetattr");
   /* Sets the parameters associated with the terminal from termios struct (raw)
   / (i.e. sets current terminal control settings for stdin and stores in raw).
   / TCSAFLUSH arg. indicates that no change will be made to stdin until all currently
     written data has been transmitted (received but unread data is discarded at this
-    point)
+    point); die if no request can be honored (no parameters are set)
   */
 } 
 
@@ -67,9 +85,11 @@ int main()
   readRaw();
 
   char buff;
-   
-  while (read(STDIN_FILENO, &buff, 1) == 1 && buff != 'q') //indefinitely take input from user until 'q' is pressed
+  while(1) //indefinitely take input until q is pressed
   {
+  //CHANGED READ: Now, we don't have to wait indefinitely for read to end, and can perform other
+  //actions in the meantime.
+    read(STDIN_FILENO, &buff, 1); //read input; will timeout after 1/10th of a second
     if (iscntrl(buff)) //test whether character is control character (nonprintable)
     {
       printf("%d\r\n", buff); //if so, format byte as decimal number (ASCII code)
@@ -78,6 +98,8 @@ int main()
     {
       printf("%d ('%c')\r\n", buff, buff);
     }
+    if (buff == 'q')
+      break;
   } 
   return 0;
 }
